@@ -31,7 +31,8 @@ class _IDCardScreenState extends State<IDCardScreen> {
   Map<String, dynamic>? employeeData;
   bool isLoading = true;
   String? deviceId;
-  String baseUrl = "http://erp.intelsofts.com"; // আপনার নতুন API ডোমেইন
+  int _updateRetryCount = 0;
+  String baseUrl = "http://libertycares.intelsofts.com";
 
   @override
   void initState() {
@@ -44,25 +45,72 @@ class _IDCardScreenState extends State<IDCardScreen> {
     String? savedUrl = await storage.read(key: 'base_url');
     if (savedUrl != null) baseUrl = savedUrl;
     await _loadSavedData();
+
+    // ডাটা লোড হওয়ার পর এক্সপায়ারি চেক করা
+    if (employeeData != null) {
+      _checkDataExpiryAndRefresh();
+    }
+  }
+
+  Future<void> _checkDataExpiryAndRefresh() async {
+    String? lastFetchStr = await storage.read(key: 'last_fetch_time');
+    if (lastFetchStr == null) return;
+
+    DateTime lastFetchTime = DateTime.parse(lastFetchStr);
+    DateTime currentTime = DateTime.now();
+
+    // ১ সপ্তাহ (৭ দিন) চেক
+    if (currentTime.difference(lastFetchTime).inDays >= 7) {
+
+      // ইন্টারনেট চেক
+      bool isOnline = await _hasInternet();
+
+      if (isOnline) {
+        // নেট থাকলে অটো রিফ্রেশ
+        String? empId = employeeData?['front_side']['id'].toString();
+        if (empId != null && empId != "N/A") {
+          await _fetchData(empId);
+        }
+      } else {
+        // ১ সপ্তাহ পার হয়েছে কিন্তু নেট নেই -> সাইন আউট
+        _handleLogout();
+        _showSnackBar("Session expired. Please login with internet.");
+      }
+    }
+  }
+
+// ইন্টারনেট চেকের সহজ ফাংশন
+  Future<bool> _hasInternet() async {
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+
+  Future<void> _getDeviceId() async {
+    var deviceInfo = DeviceInfoPlugin();
+    try {
+      if (Platform.isAndroid) {
+        var androidInfo = await deviceInfo.androidInfo;
+        deviceId = androidInfo.id;
+      } else if (Platform.isIOS) {
+        var iosInfo = await deviceInfo.iosInfo;
+        deviceId = iosInfo.identifierForVendor;
+      }
+    } catch (e) {
+      deviceId = "Unknown_ID";
+    }
   }
 
   Future<void> _saveDeviceIdToServer(String personId) async {
     try {
       // আপনার দেওয়া URL ফরম্যাট অনুযায়ী POST রিকোয়েস্ট
-      await http.put(Uri.parse('$baseUrl/api/HR/Person/SaveDeviceId?personId=$personId&deviceId=$deviceId'));
+      await http.put(Uri.parse('$baseUrl/api/HR/Person/SaveDeviceId?personId=$personId'));
     } catch (e) {
       debugPrint("Device ID saving failed: $e");
-    }
-  }
-
-  Future<void> _getDeviceId() async {
-    var deviceInfo = DeviceInfoPlugin();
-    if (Platform.isAndroid) {
-      var androidInfo = await deviceInfo.androidInfo;
-      deviceId = androidInfo.id;
-    } else if (Platform.isIOS) {
-      var iosInfo = await deviceInfo.iosInfo;
-      deviceId = iosInfo.identifierForVendor;
     }
   }
 
@@ -78,93 +126,79 @@ class _IDCardScreenState extends State<IDCardScreen> {
     }
   }
 
-  // ম্যাপিং ফাংশন: নতুন API কে আগের UI ফরমেটে সাজানো
+  // ম্যাপিং ফাংশন যেখানে Null Safety হ্যান্ডেল করা হয়েছে
   Map<String, dynamic> mapToDigitalId(Map<String, dynamic> api) {
     return {
       "company_digital_id": {
-        "is_verified": api["card"]["isVerified"] ?? false,
+        "is_verified": api["card"]?["isVerified"] ?? false,
         "design_system": {
-          "colors": {
-            "primary": api["card"]["color"]["primary"] ?? "#7077db",
-          },
-          "card_style": {
-            "border_radius": api["card"]["style"]["borderRadius"] ?? "16px",
-          }
+          "colors": {"primary": api["card"]?["color"]?["primary"] ?? "#7077db"},
+          "card_style": {"border_radius": api["card"]?["style"]?["borderRadius"] ?? "16px"}
         },
         "front_side": {
-          "company_name": api["company"]["name"] ?? "N/A",
-          "abn": api["company"]["brn"] ?? "N/A",
-          "full_name": api["name"] ?? "N/A",
-          "designation": api["position"]["name"] ?? "N/A",
-          "employee_id": api["code"] ?? "N/A",
-          "issue_date": api["card"]["issueDate"]?.toString().split('T')[0] ?? "N/A",
-          "expiry_date": api["card"]["expiryDate"]?.toString().split('T')[0] ?? "N/A",
-          "blood_group": api["bloodGroup"] ?? "N/A",
-          "employment_type": api["period"] ?? "N/A",
-          "photo_url": "$baseUrl/${api["photoUrl"]}",
-          "active": 1,
+          "id": api["id"].toString() ?? "1",
+          "company_name": api["company"]?["name"]?.toString() ?? "N/A",
+          "abn": api["company"]?["brn"]?.toString() ?? "N/A",
+          "logo_url": api["company"]?["logoUrl"] != null ? "$baseUrl/${api["company"]["logoUrl"]}" : "",
+          "full_name": api["name"]?.toString() ?? "N/A",
+          "designation": api["position"]?["name"]?.toString() ?? "N/A",
+          "employee_id": api["code"]?.toString() ?? "N/A",
+          "issue_date": api["card"]?["issueDate"]?.toString().split('T')[0] ?? "N/A",
+          "expiry_date": api["card"]?["expiryDate"]?.toString().split('T')[0] ?? "N/A",
+          "frontHeaderText": api["card"]?["frontHeaderText"]?.toString() ?? "",
+          "frontFooterText": api["card"]?["frontFooterText"]?.toString() ?? "OFFICIAL DIGITAL IDENTITY",
+          "blood_group": api["bloodGroup"]?.toString() ?? "N/A",
+          "employment_type": api["period"]?.toString() ?? "N/A",
+          "photo_url": api["photoUrl"] != null ? "$baseUrl/${api["photoUrl"]}" : "",
         },
         "back_side": {
+          "backHeaderText": api["card"]?["backHeaderText"]?.toString() ?? "",
+          "backFooterText": api["card"]?["backFooterText"]?.toString() ?? "Scan QR code to verify authenticity",
+          "auth_sign_url": api["company"]?["authorizedSignUrl"] != null ? "$baseUrl/${api["company"]["authorizedSignUrl"]}" : "",
           "contact_info": {
-            "email": api["email"] ?? "N/A",
-            "emergency_contact_phone": api["emergencyContact"] ?? "N/A",
+            "email": api["email"]?.toString() ?? "N/A",
+            "emergency_contact_phone": api["emergencyContact"]?.toString() ?? "N/A",
           },
           "location": {
-            "building": api["company"]["address"]["building"] ?? "",
-            "office_address": api["company"]["address"]["street"] ?? "N/A",
+            "building": api["company"]?["address"]?["building"]?.toString() ?? "",
+            "street": api["company"]?["address"]?["street"]?.toString() ?? "N/A",
+            "city": api["company"]?["address"]?["city"]?.toString() ?? "N/A",
+            "area": api["company"]?["address"]?["area"]?.toString() ?? "N/A",
+            "region": api["company"]?["address"]?["region"]?.toString() ?? "N/A",
           },
-          "security": {
-            "qr_code_data": api["card"]["qrCodeData"] ?? "",
-          },
-          "compliance_text": api["company"]["complianceText"] ?? "",
+          "security": {"qr_code_data": api["card"]?["qrCodeData"]?.toString() ?? "No Data"},
+          "compliance_text": api["company"]?["complianceText"]?.toString() ?? "",
         }
       }
     };
   }
 
-  void _checkSecretCode(String val) {
-    if (val == "426948") {
-      _idController.clear();
-      _showUrlConfigDialog();
-    }
-  }
-
-  void _showUrlConfigDialog() {
-    _urlController.text = baseUrl;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("API Configuration"),
-        content: TextField(controller: _urlController, decoration: const InputDecoration(labelText: "Server Base URL")),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-          ElevatedButton(
-            onPressed: () async {
-              await storage.write(key: 'base_url', value: _urlController.text);
-              setState(() => baseUrl = _urlController.text);
-              Navigator.pop(context);
-            },
-            child: const Text("Save"),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _fetchData(String empId) async {
     if (empId.isEmpty) return;
+
+    // ইন্টারনেট চেক
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      if (result.isEmpty || result[0].rawAddress.isEmpty) {
+        _showSnackBar("No Internet Connection!");
+        return;
+      }
+    } catch (_) {
+      _showSnackBar("No Internet Connection!");
+      return;
+    }
+
     setState(() => isLoading = true);
     try {
       final response = await http.get(Uri.parse('$baseUrl/api/HR/Person/IdentityCard?id=$empId'));
-
       if (response.statusCode == 200) {
         var rawData = jsonDecode(response.body);
-        debugPrint(rawData.toString(), wrapWidth: 1024);
+        var mappedData = mapToDigitalId(rawData);
+
+
         // Mac ID Validation
         String remoteMac = rawData["card"]["macId"] ?? "";
-        debugPrint(remoteMac.toString(), wrapWidth: 1024);
-
-
+        // debugPrint(remoteMac.toString(), wrapWidth: 1024);
         // যদি সার্ভারে আগে থেকে Mac ID না থাকে (অর্থাৎ প্রথমবার), তবে সেভ করুন
         if (remoteMac == "" || remoteMac == null) {
           await _saveDeviceIdToServer(rawData["id"].toString());
@@ -174,8 +208,12 @@ class _IDCardScreenState extends State<IDCardScreen> {
           return;
         }
 
-        var mappedData = mapToDigitalId(rawData);
+
+
+        // ডাটা এবং বর্তমান সময় সেভ করা
         await storage.write(key: 'saved_id_data', value: jsonEncode(mappedData));
+        await storage.write(key: 'last_fetch_time', value: DateTime.now().toIso8601String());
+
         setState(() {
           employeeData = mappedData;
           isLoading = false;
@@ -190,12 +228,33 @@ class _IDCardScreenState extends State<IDCardScreen> {
     }
   }
 
-  // ২. আপডেট ডাটা লজিক (ক্যাশ ক্লিয়ার করে রিলোড)
   Future<void> _handleUpdateData() async {
-    String? empId = employeeData?['company_digital_id']['front_side']['employee_id'].toString().split('-').last;
-    if (empId != null) {
-      await storage.delete(key: 'saved_id_data'); // ক্যাশ ক্লিয়ার
-      await _fetchData(empId); // নতুন করে সার্ভার থেকে ডাটা আনা
+    bool isOnline = await _hasInternet();
+    bool isCheckOnline= false;
+    if (!isOnline) {
+      // যদি নেট না থাকে
+      _updateRetryCount++; // কাউন্টার ১ বাড়লো
+
+      if (_updateRetryCount == 1) {
+        // প্রথমবার নেট নেই
+        _showSnackBar("Please check your internet connection to update!");
+      } else if (_updateRetryCount >= 2) {
+        // দ্বিতীয়বার বা তার বেশিবার নেট নেই
+        _updateRetryCount = 0; // কাউন্টার রিসেট করুন
+        _handleLogout();
+        _showSnackBar("Session expired due to no internet.");
+      }
+      return;
+    }
+
+
+    _updateRetryCount=0;
+    String? empId = employeeData?['company_digital_id']?['front_side']?['id']?.toString();
+
+
+    if (empId != null && empId != "N/A") {
+      await _fetchData(empId);
+      _showSnackBar("Data updated successfully!");
     }
   }
 
@@ -203,12 +262,9 @@ class _IDCardScreenState extends State<IDCardScreen> {
     await storage.delete(key: 'saved_id_data');
     setState(() => employeeData = null);
   }
-
   void _showSnackBar(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
   }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -218,26 +274,24 @@ class _IDCardScreenState extends State<IDCardScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF9FAFB),
       appBar: AppBar(
-        title: const Text("Digital Identity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        title:  Text( employeeData?["card"]?["frontHeaderText"] ?? "Digital Identity Card", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         centerTitle: true,
-        backgroundColor: Colors.transparent,
+        backgroundColor: Colors.white,
         elevation: 0,
         foregroundColor: Colors.black,
         actions: [
           PopupMenuButton<String>(
             onSelected: (val) {
-              if (val == 'refresh') {
-                _handleUpdateData();
-              } else if (val == 'logout') {
+              if (val == 'refresh') { _handleUpdateData();}
+              if (val == 'logout') {
                 _handleLogout();
-              } else if (val == 'exit') {
-                SystemNavigator.pop(); // ৩. অ্যাপ বন্ধ করার জন্য
               }
+              if (val == 'exit') {SystemNavigator.pop();}
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(value: 'refresh', child: ListTile(leading: Icon(Icons.refresh), title: Text("Update Data"))),
-              const PopupMenuItem(value: 'exit', child: ListTile(leading: Icon(Icons.exit_to_app, color: Colors.red), title: Text("Exit", style: TextStyle(color: Colors.red)))),
-              const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout), title: Text("Logout"))),
+              const PopupMenuItem(value: 'refresh', child: ListTile(leading: Icon(Icons.refresh), title: Text("Update"))),
+              const PopupMenuItem(value: 'exit', child: ListTile(leading: Icon(Icons.exit_to_app, color: Colors.red), title: Text("Exit"))),
+              // const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout), title: Text("Logout"))),
             ],
           )
         ],
@@ -254,38 +308,74 @@ class _IDCardScreenState extends State<IDCardScreen> {
     );
   }
 
-  // আপনার দেওয়া আগের Login UI
   Widget _buildLoginLayout() {
+    // অ্যাসেট পাথ (অবশ্যই pubspec.yaml এ থাকতে হবে)
+    String companyLogoUrl = "assets/icon.png";
+
     return Scaffold(
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.badge_outlined, size: 100, color: Color(0xFF7077db)),
+            // অ্যাসেট ইমেজ ব্যবহার
+            Container(
+              height: 100,
+              width: 100,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Image.asset(
+                companyLogoUrl,
+                fit: BoxFit.contain,
+                // যদি ইমেজ না পায় তবে এরর হ্যান্ডেল করবে
+                errorBuilder: (context, error, stackTrace) {
+                  return const Icon(
+                      Icons.badge_outlined,
+                      size: 100,
+                      color: Color(0xFF7077db)
+                  );
+                },
+              ),
+            ),
             const SizedBox(height: 20),
-            const Text("Intellect Digital ID", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const Text(
+                "Intellect Digital ID",
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)
+            ),
             const SizedBox(height: 10),
-            Text("Device ID: $deviceId", style: const TextStyle(color: Colors.grey, fontSize: 10)),
+            Text(
+                "Device ID: $deviceId",
+                style: const TextStyle(color: Colors.grey, fontSize: 10)
+            ),
             const SizedBox(height: 40),
             TextField(
               controller: _idController,
-              onChanged: _checkSecretCode,
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.person_pin),
                 hintText: "Enter Employee ID",
                 filled: true,
                 fillColor: Colors.grey[100],
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none
+                ),
               ),
             ),
             const SizedBox(height: 20),
             SizedBox(
-              width: double.infinity, height: 55,
+              width: double.infinity,
+              height: 55,
               child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7077db), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF7077db),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                ),
                 onPressed: () => _fetchData(_idController.text),
-                child: const Text("Access Identity Card", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                child: const Text(
+                    "Access Identity Card",
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                ),
               ),
             ),
           ],
@@ -298,7 +388,6 @@ class _IDCardScreenState extends State<IDCardScreen> {
     var design = employeeData!['company_digital_id']['design_system'];
     var front = employeeData!['company_digital_id']['front_side'];
     var back = employeeData!['company_digital_id']['back_side'];
-    // isVerified স্ট্যাটাস চেক
     bool isVerified = employeeData!['company_digital_id']['is_verified'] ?? false;
 
     Color primaryColor = Color(int.parse(design['colors']['primary'].replaceAll('#', '0xff')));
@@ -307,40 +396,28 @@ class _IDCardScreenState extends State<IDCardScreen> {
     return Stack(
       alignment: Alignment.center,
       children: [
-        // মূল কার্ড
         ColorFiltered(
-          // যদি ভেরিফাইড না হয়, তবে কার্ডটি গ্রে-স্কেল বা ধূসর হয়ে যাবে
           colorFilter: isVerified
               ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
               : const ColorFilter.mode(Colors.grey, BlendMode.saturation),
           child: Opacity(
-            opacity: isVerified ? 1.0 : 0.6, // আনভেরিফাইড হলে একটু ঝাপসা হবে
+            opacity: isVerified ? 1.0 : 0.6,
             child: FlipCard(
               front: _CardSide(isFront: true, primary: primaryColor, radius: radius, data: front, backData: back),
               back: _CardSide(isFront: false, primary: primaryColor, radius: radius, data: front, backData: back),
             ),
           ),
         ),
-
-        // যদি ভেরিফাইড না হয়, তবে উপরে "NOT VERIFIED" লেখা আসবে
         if (!isVerified)
-          IgnorePointer( // যাতে ওভারলে থাকলেও কার্ড ফ্লিপ করা যায় (ইচ্ছে হলে)
+          IgnorePointer(
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               decoration: BoxDecoration(
-                color: Colors.deepOrange.shade300.withOpacity(0.8),
+                color: Colors.redAccent.withOpacity(0.9),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: Colors.white, width: 2),
               ),
-              child: const Text(
-                "NOT VERIFIED",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2,
-                ),
-              ),
+              child: const Text("NOT VERIFIED", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 2)),
             ),
           ),
       ],
@@ -348,7 +425,6 @@ class _IDCardScreenState extends State<IDCardScreen> {
   }
 }
 
-// আপনার দেওয়া আগের কার্ড ডিজাইন UI
 class _CardSide extends StatelessWidget {
   final bool isFront; final Color primary; final double radius; final dynamic data; final dynamic backData;
   const _CardSide({required this.isFront, required this.primary, required this.radius, required this.data, required this.backData});
@@ -373,49 +449,80 @@ class _CardSide extends StatelessWidget {
   }
 
   Widget _buildFrontLayout(BuildContext context) {
+    String logoUrl = data['logo_url'] ?? "";
+    String photoUrl = data['photo_url'] ?? "";
+
     return Column(
       children: [
         Container(
-          padding: const EdgeInsets.all(20),
-          width: double.infinity, height: 120,
+          padding: const EdgeInsets.fromLTRB(15, 20, 15, 50),
+          width: double.infinity,
           color: primary,
-          child: Column(children: [
-            FittedBox(child: Text(data['company_name'].toString().toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 1.5))),
-            Text("ABN: ${data['abn']}", style: const TextStyle(color: Colors.white70, fontSize: 10)),
-          ]),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              logoUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                imageUrl: logoUrl,
+                height: 45, width: 45,
+                placeholder: (context, url) => const CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                errorWidget: (context, url, error) => const Icon(Icons.business, color: Colors.white, size: 40),
+              )
+                  : const Icon(Icons.business, color: Colors.white, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(data['company_name'].toString().toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 1)),
+                    Text("ABN: ${data['abn']}", style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         Transform.translate(
-          offset: const Offset(0, -50),
+          offset: const Offset(0, -45),
           child: Column(children: [
-            CircleAvatar(radius: 65, backgroundColor: Colors.white, child: CircleAvatar(radius: 60, backgroundImage: CachedNetworkImageProvider(data['photo_url']))),
+            CircleAvatar(
+                radius: 65,
+                backgroundColor: Colors.white,
+                child: CircleAvatar(
+                  radius: 60,
+                  backgroundColor: Colors.grey[200],
+                  backgroundImage: photoUrl.isNotEmpty ? CachedNetworkImageProvider(photoUrl) : null,
+                  child: photoUrl.isEmpty ? const Icon(Icons.person, size: 50, color: Colors.grey) : null,
+                )
+            ),
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: FittedBox(child: Text(data['full_name'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1D2939)))),
+              child: Text(data['full_name'], textAlign: TextAlign.center, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1D2939))),
             ),
-            Text(data['designation'].toString().toUpperCase(), style: TextStyle(fontSize: 12, color: primary, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            Text(data['designation'].toString().toUpperCase(), style: TextStyle(fontSize: 13, color: primary, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
           ]),
         ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 25),
-            child: Column(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              _infoRow("EMPLOYEE ID", data['employee_id'], "BLOOD GROUP", data['blood_group']),
-              const Divider(height: 1),
-              _infoRow("ISSUE DATE", data['issue_date'], "EXPIRY DATE", data['expiry_date']),
-              const Divider(height: 1),
-              _infoRow("EMPLOYMENT", data['employment_type'], "STATUS", "ACTIVE"),
-            ]),
-          ),
+        const Spacer(),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 25),
+          child: Column(children: [
+            _infoRow("EMPLOYEE ID", data['employee_id'], "BLOOD GROUP", data['blood_group']),
+            const Divider(height: 20),
+            _infoRow("ISSUE DATE", data['issue_date'], "EXPIRY DATE", data['expiry_date']),
+            const Divider(height: 20),
+            _infoRow("EMPLOYMENT", data['employment_type'], "STATUS", "ACTIVE"),
+          ]),
         ),
+        const Spacer(),
         Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           width: double.infinity,
           color: const Color(0xFF1D2939),
-          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.verified_user, color: Colors.greenAccent, size: 14),
+          child:  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(Icons.verified, color: Colors.blueAccent, size: 16),
             SizedBox(width: 8),
-            Text("OFFICIAL DIGITAL IDENTITY", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            Text( data['frontFooterText'].toString().toUpperCase() , style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
           ]),
         )
       ],
@@ -423,21 +530,40 @@ class _CardSide extends StatelessWidget {
   }
 
   Widget _buildBackLayout(BuildContext context) {
+    String authSignUrl = backData['auth_sign_url'] ?? "";
+    String qrData = backData['security']?['qr_code_data'] ?? "No Data";
+
     return Column(
       children: [
         const SizedBox(height: 25),
-        const Text("SECURITY & COMPLIANCE", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey, letterSpacing: 1.2)),
+        Text(backData['backHeaderText'].toString().toUpperCase() ?? "SECURITY & COMPLIANCE", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey, letterSpacing: 1.2)),
         const Spacer(),
-        QrImageView(data: backData['security']['qr_code_data'], size: 160, eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: primary)),
+        QrImageView(data: qrData, size: 140, eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.square, color: primary)),
+        const Spacer(),
+        Column(
+          children: [
+            authSignUrl.isNotEmpty
+                ? CachedNetworkImage(
+              imageUrl: authSignUrl,
+              height: 50,
+              placeholder: (context, url) => const SizedBox(height: 50),
+              errorWidget: (context, url, error) => const Icon(Icons.gesture, color: Colors.grey),
+            )
+                : const SizedBox(height: 50, child: Icon(Icons.gesture, color: Colors.grey)),
+            Container(width: 150, height: 1, color: Colors.grey.shade400),
+            const SizedBox(height: 4),
+            const Text("AUTHORIZATION SIGNATURE", style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
+          ],
+        ),
         const Spacer(),
         _backInfoItem(Icons.email_outlined, "OFFICIAL EMAIL", backData['contact_info']['email']),
-        _backInfoItem(Icons.business_outlined, "OFFICE LOCATION", "${backData['location']['building']}, ${backData['location']['office_address']}"),
-        _backInfoItem(Icons.emergency_share_outlined, "EMERGENCY CONTACT", backData['contact_info']['emergency_contact_phone']),
+        _backInfoItem(Icons.streetview, "OFFICE ADDRESS 1", "${backData['location']['building']} ${backData['location']['street']}"),
+        _backInfoItem(Icons.business_outlined, "OFFICE ADDRESS 2", "${backData['location']['area']} ${backData['location']['city']} ${backData['location']['region']}"),
+        _backInfoItem(Icons.call_end_outlined, "EMERGENCY CONTACT", backData['contact_info']['emergency_contact_phone']),
         const Spacer(),
         Padding(
           padding: const EdgeInsets.all(20),
-          child: Text("${backData['compliance_text']} If found, please return to the nearest branch.",
-              textAlign: TextAlign.center, style: const TextStyle(fontSize: 9, color: Colors.grey, fontStyle: FontStyle.italic)),
+          child: Text(backData['backFooterText'].toString().toUpperCase() ?? "", textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic)),
         ),
       ],
     );
@@ -452,21 +578,21 @@ class _CardSide extends StatelessWidget {
 
   Widget _labelVal(String l, String v) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(l, style: const TextStyle(fontSize: 8, color: Colors.grey, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 2),
-      Text(v, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF344054))),
+      Text(l, style: const TextStyle(fontSize: 9, color: Colors.grey, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 4),
+      Text(v, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF344054))),
     ]);
   }
 
   Widget _backInfoItem(IconData icon, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 8),
       child: Row(children: [
-        Icon(icon, size: 18, color: primary.withOpacity(0.6)),
+        Icon(icon, size: 20, color: primary.withOpacity(0.7)),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: const TextStyle(fontSize: 8, color: Colors.grey, fontWeight: FontWeight.bold)),
-          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+          Text(label, style: const TextStyle(fontSize: 9, color: Colors.grey, fontWeight: FontWeight.bold)),
+          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
         ]))
       ]),
     );
