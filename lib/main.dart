@@ -34,6 +34,7 @@ class _IDCardScreenState extends State<IDCardScreen> {
   int _updateRetryCount = 0;
   String baseUrl = "http://libertycares.intelsofts.com";
 
+
   @override
   void initState() {
     super.initState();
@@ -146,6 +147,8 @@ class _IDCardScreenState extends State<IDCardScreen> {
           "issue_date": api["card"]?["issueDate"]?.toString().split('T')[0] ?? "N/A",
           "expiry_date": api["card"]?["expiryDate"]?.toString().split('T')[0] ?? "N/A",
           "frontHeaderText": api["card"]?["frontHeaderText"]?.toString() ?? "",
+          "softwareBy": api["card"]?["softwareBy"]?.toString() ?? "Software by Intellect Software Ltd",
+          "poweredBy": api["card"]?["poweredBy"]?.toString() ?? "Powered by https://libertycares.com.au",
           "frontFooterText": api["card"]?["frontFooterText"]?.toString() ?? "OFFICIAL DIGITAL IDENTITY",
           "blood_group": api["bloodGroup"]?.toString() ?? "N/A",
           "employment_type": api["period"]?.toString() ?? "N/A",
@@ -384,6 +387,75 @@ class _IDCardScreenState extends State<IDCardScreen> {
     );
   }
 
+  // Widget _buildFlipCard(BuildContext context) {
+  //   var design = employeeData!['company_digital_id']['design_system'];
+  //   var front = employeeData!['company_digital_id']['front_side'];
+  //   var back = employeeData!['company_digital_id']['back_side'];
+  //   bool isVerified = employeeData!['company_digital_id']['is_verified'] ?? false;
+  //
+  //   Color primaryColor = Color(int.parse(design['colors']['primary'].replaceAll('#', '0xff')));
+  //   double radius = double.parse(design['card_style']['border_radius'].replaceAll('px', ''));
+  //
+  //   return Stack(
+  //     alignment: Alignment.center,
+  //     children: [
+  //       ColorFiltered(
+  //         colorFilter: isVerified
+  //             ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
+  //             : const ColorFilter.mode(Colors.grey, BlendMode.saturation),
+  //         child: Opacity(
+  //           opacity: isVerified ? 1.0 : 0.6,
+  //           child: FlipCard(
+  //             front: _CardSide(isFront: true, primary: primaryColor, radius: radius, data: front, backData: back),
+  //             back: _CardSide(isFront: false, primary: primaryColor, radius: radius, data: front, backData: back),
+  //           ),
+  //         ),
+  //       ),
+  //       if (!isVerified)
+  //         IgnorePointer(
+  //           child: Container(
+  //             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+  //             decoration: BoxDecoration(
+  //               color: Colors.redAccent.withOpacity(0.9),
+  //               borderRadius: BorderRadius.circular(8),
+  //               border: Border.all(color: Colors.white, width: 2),
+  //             ),
+  //             child: const Text("NOT VERIFIED", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 2)),
+  //           ),
+  //         ),
+  //       // --- কার্ডের বডির বাইরের নিচের অংশ ---
+  //       const SizedBox(height: 20), // কার্ড থেকে টেক্সটের দূরত্ব
+  //       Padding(
+  //         padding: const EdgeInsets.symmetric(horizontal: 30),
+  //         child: Row(
+  //           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  //           children: [
+  //             const Text(
+  //               "Powered by abc.com",
+  //               style: TextStyle(
+  //                 fontSize: 10,
+  //                 color: Colors.grey,
+  //                 fontWeight: FontWeight.w500,
+  //               ),
+  //             ),
+  //             const Text(
+  //               "Software by Intellect Software Ltd",
+  //               style: TextStyle(
+  //                 fontSize: 10,
+  //                 color: Colors.grey,
+  //                 fontWeight: FontWeight.w500,
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     ],
+  //   );
+  // }
+
+
+
+  bool _isFrontVisible = true;
   Widget _buildFlipCard(BuildContext context) {
     var design = employeeData!['company_digital_id']['design_system'];
     var front = employeeData!['company_digital_id']['front_side'];
@@ -393,33 +465,78 @@ class _IDCardScreenState extends State<IDCardScreen> {
     Color primaryColor = Color(int.parse(design['colors']['primary'].replaceAll('#', '0xff')));
     double radius = double.parse(design['card_style']['border_radius'].replaceAll('px', ''));
 
-    return Stack(
-      alignment: Alignment.center,
+    debugPrint((employeeData!['company_digital_id']['front_side']['softwareBy'].toString()), wrapWidth: 1024);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        ColorFiltered(
-          colorFilter: isVerified
-              ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
-              : const ColorFilter.mode(Colors.grey, BlendMode.saturation),
-          child: Opacity(
-            opacity: isVerified ? 1.0 : 0.6,
-            child: FlipCard(
-              front: _CardSide(isFront: true, primary: primaryColor, radius: radius, data: front, backData: back),
-              back: _CardSide(isFront: false, primary: primaryColor, radius: radius, data: front, backData: back),
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            ColorFiltered(
+              colorFilter: isVerified
+                  ? const ColorFilter.mode(Colors.transparent, BlendMode.multiply)
+                  : const ColorFilter.mode(Colors.grey, BlendMode.saturation),
+              child: Opacity(
+                opacity: isVerified ? 1.0 : 0.6,
+                child: FlipCard(
+                  direction: FlipDirection.HORIZONTAL,
+                  speed: 600,
+                  // --- এখানে পরিবর্তন করা হয়েছে ---
+                  onFlip: () {
+                    setState(() {
+                      _isFrontVisible = !_isFrontVisible; // প্রতিবার ফ্লিপে স্টেট উল্টে যাবে
+                    });
+                  },
+                  front: _CardSide(isFront: true, primary: primaryColor, radius: radius, data: front, backData: back),
+                  back: _CardSide(isFront: false, primary: primaryColor, radius: radius, data: front, backData: back),
+                ),
+              ),
             ),
+            if (!isVerified)
+              IgnorePointer(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: const Text("NOT VERIFIED", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                ),
+              ),
+          ],
+        ),
+
+        const SizedBox(height: 25),
+
+        // টেক্সট সেকশন
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+
+          // ট্রানজিশনটি আরও স্মুথ করার জন্য (ঐচ্ছিক)
+          transitionBuilder: (Widget child, Animation<double> animation) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          child: Text(
+            // এখানে আপনার ম্যাপিং পাথ অনুযায়ী ডাটা চেক করা হচ্ছে
+            _isFrontVisible
+                ? (front['poweredBy']?.toString() ?? "Powered by https://libertycares.com.au")
+                : (front['softwareBy']?.toString() ?? "Software by Intellect Software Ltd"),
+
+
+
+            // Key অত্যন্ত গুরুত্বপূর্ণ, এটি ছাড়া AnimatedSwitcher বুঝবে না যে কন্টেন্ট চেঞ্জ হয়েছে
+            key: ValueKey<bool>(_isFrontVisible),
+
+            style: TextStyle(
+              fontSize: 10,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            ),
+            textAlign: TextAlign.center,
           ),
         ),
-        if (!isVerified)
-          IgnorePointer(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withOpacity(0.9),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: const Text("NOT VERIFIED", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 2)),
-            ),
-          ),
       ],
     );
   }
@@ -557,8 +674,14 @@ class _CardSide extends StatelessWidget {
         ),
         const Spacer(),
         _backInfoItem(Icons.email_outlined, "OFFICIAL EMAIL", backData['contact_info']['email']),
-        _backInfoItem(Icons.streetview, "OFFICE ADDRESS 1", "${backData['location']['building']} ${backData['location']['street']}"),
-        _backInfoItem(Icons.business_outlined, "OFFICE ADDRESS 2", "${backData['location']['area']} ${backData['location']['city']} ${backData['location']['region']}"),
+        // _backInfoItem(Icons.streetview, "OFFICE ADDRESS 1", "${backData['location']['building']} ${backData['location']['street']}"),
+        // _backInfoItem(Icons.business_outlined, "OFFICE ADDRESS 2", "${backData['location']['area']} ${backData['location']['city']} ${backData['location']['region']}"),
+    _backInfoItem_address(
+    Icons.business_outlined,
+    "OFFICE ADDRESS",
+    "${backData['location']['building']}, ${backData['location']['street']}", // প্রথম অংশ
+    "${backData['location']['area']}, ${backData['location']['city']}, ${backData['location']['region']}" // দ্বিতীয় অংশ
+    ),
         _backInfoItem(Icons.call_end_outlined, "EMERGENCY CONTACT", backData['contact_info']['emergency_contact_phone']),
         const Spacer(),
         Padding(
@@ -597,4 +720,58 @@ class _CardSide extends StatelessWidget {
       ]),
     );
   }
+  Widget _backInfoItem_address(IconData icon, String label, String firstPart, String secondPart) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // আইকন শুধু প্রথম লাইনের লেবেলের সাথে থাকবে
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, size: 18, color: primary.withOpacity(0.8)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // প্রথম লাইন: লেবেল (যেমন: OFFICE ADDRESS)
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                // দ্বিতীয় লাইন: বিল্ডিং এবং স্ট্রিট (প্রথম অংশ)
+                Text(
+                  firstPart,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF344054),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                // তৃতীয় লাইন: এরিয়া, সিটি এবং রিজিয়ন (দ্বিতীয় অংশ - এখানে আইকন বা লেবেল নেই)
+                Text(
+                  secondPart,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.blueGrey, // দ্বিতীয় লাইনটি আলাদা বোঝাতে হালকা রঙ
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
 }
